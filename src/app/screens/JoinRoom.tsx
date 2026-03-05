@@ -5,6 +5,7 @@ import BevelButton from '../components/BevelButton';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { apiCall } from '../utils/supabase';
+import { getAuthUserId } from '../utils/auth';
 import { audioManager } from '../utils/audio';
 
 export default function JoinRoom() {
@@ -49,15 +50,14 @@ export default function JoinRoom() {
 
     setLoading(true);
     try {
-      const playerId = `player-${Date.now()}-${Math.random()}`;
+      const authUid = await getAuthUserId(); // Use authenticated user ID
       
       await apiCall('/rooms/join', 'POST', {
         roomCode: roomCode.toUpperCase(),
-        playerId,
         playerName,
       });
 
-      localStorage.setItem('bluff-player-id', playerId);
+      // Store player name for display purposes
       localStorage.setItem('bluff-player-name', playerName);
       
       audioManager.play('room_join');

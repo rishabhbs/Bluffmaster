@@ -3,33 +3,39 @@ import { useNavigate, useParams } from 'react-router';
 import WalnutPanel from '../components/WalnutPanel';
 import BevelButton from '../components/BevelButton';
 import { apiCall } from '../utils/supabase';
+import { getAuthUserId } from '../utils/auth';
 import { audioManager } from '../utils/audio';
 import { getRoomUrl } from '../utils/roomCode';
 import { QRCodeSVG } from 'qrcode.react';
 import { Copy, Share2, Crown, Bot, Loader2 } from 'lucide-react';
-import { GameState } from '../types/game';
+import { PublicGameState } from '../types/game';
 
 export default function Lobby() {
   const navigate = useNavigate();
   const { roomCode } = useParams<{ roomCode: string }>();
-  const [gameState, setGameState] = useState<GameState | null>(null);
-  const [playerId] = useState(localStorage.getItem('bluff-player-id') || '');
+  const [gameState, setGameState] = useState<PublicGameState | null>(null);
+  const [myAuthUid, setMyAuthUid] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
 
-  const isHost = gameState?.players.find(p => p.id === playerId)?.isHost;
+  const isHost = gameState?.players.find(p => p.id === myAuthUid)?.isHost;
   const roomUrl = getRoomUrl(roomCode || '');
 
   useEffect(() => {
-    if (!roomCode || !playerId) {
+    if (!roomCode) {
       navigate('/');
       return;
     }
 
+    // Get auth user ID
+    getAuthUserId().then(uid => {
+      setMyAuthUid(uid);
+    });
+
     loadGameState();
     const interval = setInterval(loadGameState, 1000);
     return () => clearInterval(interval);
-  }, [roomCode, playerId]);
+  }, [roomCode]);
 
   const loadGameState = async () => {
     try {

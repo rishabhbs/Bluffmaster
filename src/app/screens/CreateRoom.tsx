@@ -7,6 +7,7 @@ import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
 import { generateRoomCode } from '../utils/roomCode';
 import { apiCall } from '../utils/supabase';
+import { getAuthUserId } from '../utils/auth';
 import { audioManager } from '../utils/audio';
 import { Bot } from 'lucide-react';
 
@@ -27,21 +28,20 @@ export default function CreateRoom() {
     setLoading(true);
     try {
       const roomCode = generateRoomCode();
-      const hostId = `player-${Date.now()}-${Math.random()}`;
+      const authUid = await getAuthUserId(); // Use authenticated user ID
       
       // Only send bot slots relevant to maxPlayers
       const relevantBotSlots = botSlots.slice(0, maxPlayers - 1);
 
       await apiCall('/rooms/create', 'POST', {
         roomCode,
-        hostId,
         hostName: playerName,
         maxPlayers,
         botSlots: relevantBotSlots,
         isPrivate,
       });
 
-      localStorage.setItem('bluff-player-id', hostId);
+      // Store player name for display purposes
       localStorage.setItem('bluff-player-name', playerName);
       
       audioManager.play('room_join');

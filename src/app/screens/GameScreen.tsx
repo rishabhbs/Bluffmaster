@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { GameState, Card, Rank } from '../types/game';
+import { PublicGameState, Card, Rank } from '../types/game';
 import { apiCall, supabase } from '../utils/supabase';
+import { getAuthUserId } from '../utils/auth';
 import { audioManager } from '../utils/audio';
 import { RANK_LABELS } from '../utils/deck';
 import PlayingCard from '../components/PlayingCard';
@@ -28,8 +29,8 @@ const sortCardsByRank = (cards: Card[]): Card[] => {
 export default function GameScreen() {
   const navigate = useNavigate();
   const { roomCode } = useParams<{ roomCode: string }>();
-  const [playerId] = useState(localStorage.getItem('bluff-player-id') || '');
-  const [gameState, setGameState] = useState<GameState | null>(null);
+  const [myAuthUid, setMyAuthUid] = useState<string>('');
+  const [gameState, setGameState] = useState<PublicGameState | null>(null);
   const [myHand, setMyHand] = useState<Card[]>([]);
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [showDeclarationModal, setShowDeclarationModal] = useState(false);
@@ -40,17 +41,23 @@ export default function GameScreen() {
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
   const [isResolvingBluff, setIsResolvingBluff] = useState(false);
   const [channel, setChannel] = useState<RealtimeChannel | null>(null);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
 
-  const isMyTurn = gameState?.currentTurn === playerId;
-  const currentPlayer = gameState?.players.find(p => p.id === playerId);
-  const canCallBluff = isMyTurn && gameState?.lastPlay && gameState?.lastPlay.playerId !== playerId && gameState.pile.length > 0;
-  const canPass = isMyTurn && gameState?.roundStartedBy !== playerId;
+  const isMyTurn = gameState?.currentTurn === myAuthUid;
+  const currentPlayer = gameState?.players.find(p => p.id === myAuthUid);
+  const canCallBluff = isMyTurn && gameState?.lastPlay && gameState?.lastPlay.playerId !== myAuthUid && (gameState.pileCount || 0) > 0;
+  const canPass = isMyTurn && gameState?.roundStartedBy !== myAuthUid;
 
   useEffect(() => {
-    if (!roomCode || !playerId) {
+    if (!roomCode) {
       navigate('/');
       return;
     }
+
+    // Get auth user ID
+    getAuthUserId().then(uid => {
+      setMyAuthUid(uid);
+    });
 
     // Initial load
     loadCombinedState();
@@ -70,20 +77,18 @@ export default function GameScreen() {
           setGameState(payload.payload.gameState);
         }
       })
-      .on('broadcast', { event: 'hand_update' }, (payload: any) => {
-        console.log('🔥 WebSocket: Hand updated for player', playerId);
-        if (payload.payload?.playerId === playerId && payload.payload?.hand) {
-          setMyHand(sortCardsByRank(payload.payload.hand));
-        }
-      })
       .subscribe((status) => {
         console.log('🔥 WebSocket subscription status:', status);
         if (status === 'SUBSCRIBED') {
           console.log('✅ Successfully subscribed to room:', roomCode);
           setConnectionError(null);
+          setIsRealtimeConnected(true);
         } else if (status === 'CHANNEL_ERROR') {
           console.error('❌ WebSocket channel error');
           setConnectionError('Real-time connection error');
+          setIsRealtimeConnected(false);
+        } else if (status === 'CLOSED') {
+          setIsRealtimeConnected(false);
         }
       });
 
@@ -92,12 +97,21 @@ export default function GameScreen() {
     // Heartbeat to keep player active
     const heartbeatInterval = setInterval(sendHeartbeat, 5000);
     
+    // Polling fallback - only when realtime is not connected
+    const pollingInterval = setInterval(() => {
+      if (!isRealtimeConnected) {
+        console.log('📡 Polling fallback (realtime disconnected)');
+        loadCombinedState();
+      }
+    }, 2000);
+    
     return () => {
       console.log('🔌 Unsubscribing from room:', roomCode);
       roomChannel.unsubscribe();
       clearInterval(heartbeatInterval);
+      clearInterval(pollingInterval);
     };
-  }, [roomCode, playerId]);
+  }, [roomCode, isRealtimeConnected]);
 
   useEffect(() => {
     if (gameState?.gamePhase === 'bluff_reveal') {
@@ -115,7 +129,7 @@ export default function GameScreen() {
 
   // Bot turn handler
   useEffect(() => {
-    if (!gameState || gameState.gamePhase !== 'playing') return;
+    if (!gameState || gameState.gamePhase !== 'playing' || !myAuthUid) return;
     
     const currentPlayer = gameState.players.find(p => p.id === gameState.currentTurn);
     if (currentPlayer?.isBot && gameState.currentTurn !== playerId) {
@@ -140,10 +154,12 @@ export default function GameScreen() {
   }, [gameState?.gamePhase]);
 
   const loadCombinedState = async () => {
+    if (!myAuthUid) return;
+    
     try {
-      const response = await apiCall(`/rooms/${roomCode}/state/${playerId}`);
+      const response = await apiCall(`/rooms/${roomCode}/state`);
       setGameState(response.gameState);
-      setMyHand(sortCardsByRank(response.hand));
+      setMyHand(sortCardsByRank(response.myHand || []));
       setIsLoadingInitial(false);
       setConnectionError(null);
     } catch (error: any) {
@@ -153,29 +169,11 @@ export default function GameScreen() {
     }
   };
 
-  const loadGameState = async () => {
-    try {
-      const response = await apiCall(`/rooms/${roomCode}/state/${playerId}`);
-      setGameState(response.gameState);
-      setMyHand(sortCardsByRank(response.hand));
-    } catch (error: any) {
-      console.error('Error loading game state:', error);
-      setConnectionError(error.message);
-    }
-  };
-
-  const loadMyHand = async () => {
-    try {
-      const response = await apiCall(`/rooms/${roomCode}/hand/${playerId}`);
-      setMyHand(sortCardsByRank(response.hand));
-    } catch (error: any) {
-      console.error('Error loading hand:', error);
-    }
-  };
-
   const sendHeartbeat = async () => {
+    if (!myAuthUid) return;
+    
     try {
-      await apiCall(`/rooms/${roomCode}/heartbeat`, 'POST', { playerId });
+      await apiCall(`/rooms/${roomCode}/heartbeat`, 'POST', {});
     } catch (error: any) {
       console.error('Error sending heartbeat:', error);
       setConnectionError(error.message);
@@ -207,7 +205,7 @@ export default function GameScreen() {
   };
 
   const handlePlayCards = () => {
-    if (selectedCards.size === 0) return;
+    if (selectedCards.size === 0 || !myAuthUid) return;
     
     // If activeRank is already set, play automatically with that rank
     if (gameState?.activeRank) {
@@ -219,43 +217,73 @@ export default function GameScreen() {
   };
 
   const handleDeclareAndPlay = async (declaredRank: Rank) => {
+    if (!myAuthUid || !gameState) return;
+    
     try {
       setShowDeclarationModal(false);
       
       await apiCall(`/rooms/${roomCode}/play`, 'POST', {
-        playerId,
         cardIds: Array.from(selectedCards),
         declaredRank,
+        expectedVersion: gameState.stateVersion,
       });
 
       audioManager.play('card_place');
       setSelectedCards(new Set());
-      loadGameState();
-      loadMyHand();
+      
+      // Reload state to get updated hand
+      await loadCombinedState();
     } catch (error: any) {
       console.error('Error playing cards:', error);
-      alert('Failed to play cards: ' + error.message);
+      
+      // Handle version conflict
+      if (error.message.includes('409') || error.message.includes('version')) {
+        alert('Game state changed. Refreshing...');
+        await loadCombinedState();
+      } else {
+        alert('Failed to play cards: ' + error.message);
+      }
     }
   };
 
   const handlePass = async () => {
+    if (!myAuthUid || !gameState) return;
+    
     try {
-      await apiCall(`/rooms/${roomCode}/pass`, 'POST', { playerId });
+      await apiCall(`/rooms/${roomCode}/pass`, 'POST', {
+        expectedVersion: gameState.stateVersion,
+      });
       audioManager.play('pass');
-      loadGameState();
+      await loadCombinedState();
     } catch (error: any) {
       console.error('Error passing:', error);
-      alert('Failed to pass: ' + error.message);
+      
+      if (error.message.includes('409') || error.message.includes('version')) {
+        alert('Game state changed. Refreshing...');
+        await loadCombinedState();
+      } else {
+        alert('Failed to pass: ' + error.message);
+      }
     }
   };
 
   const handleCallBluff = async () => {
+    if (!myAuthUid || !gameState) return;
+    
     try {
-      await apiCall(`/rooms/${roomCode}/bluff`, 'POST', { callerId: playerId });
-      loadGameState();
+      await apiCall(`/rooms/${roomCode}/bluff`, 'POST', {
+        expectedVersion: gameState.stateVersion,
+      });
+      await loadCombinedState();
     } catch (error: any) {
       console.error('Error calling bluff:', error);
-      alert('Failed to call bluff: ' + error.message);
+      
+      if (error.message.includes('409') || error.message.includes('version')) {
+        alert('Game state changed. Refreshing...');
+        await loadCombinedState();
+      } else {
+        alert('Failed to call bluff: ' + error.message);
+      }
     }
   };
 

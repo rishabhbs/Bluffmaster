@@ -1,10 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 import { projectId, publicAnonKey } from '../../../utils/supabase/info';
+import { getSessionToken, refreshAuth } from './auth';
 
 export const supabase = createClient(
   `https://${projectId}.supabase.co`,
   publicAnonKey,
   {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+    },
     realtime: {
       params: {
         eventsPerSecond: 10,
@@ -40,14 +46,41 @@ async function fetchWithRetry(url: string, options: RequestInit, retries = 3, de
 
 export async function apiCall(endpoint: string, method: string = 'GET', body?: any) {
   try {
+    // Get the authenticated user's access token
+    const accessToken = await getSessionToken();
+    
     const response = await fetchWithRetry(`${serverUrl}${endpoint}`, {
       method,
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${publicAnonKey}`,
+        'Authorization': `Bearer ${accessToken}`,
       },
       body: body ? JSON.stringify(body) : undefined,
     });
+
+    // Handle 401 - refresh auth and retry once
+    if (response.status === 401) {
+      console.log('🔄 Got 401, refreshing auth and retrying...');
+      await refreshAuth();
+      
+      const newAccessToken = await getSessionToken();
+      const retryResponse = await fetchWithRetry(`${serverUrl}${endpoint}`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${newAccessToken}`,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      
+      if (!retryResponse.ok) {
+        const errorText = await retryResponse.text();
+        console.error(`API call failed after retry for ${endpoint}:`, retryResponse.status, errorText);
+        throw new Error(errorText || `API call failed: ${retryResponse.statusText}`);
+      }
+      
+      return await retryResponse.json();
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
