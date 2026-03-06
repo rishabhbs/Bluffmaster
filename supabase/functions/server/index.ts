@@ -1,11 +1,11 @@
 import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
-import * as kv from "./kv_store.tsx";
-import * as gameLogic from "./game-logic.tsx";
+import * as kv from "./kv_store.ts";
+import * as gameLogic from "./game-logic.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { verifyAuth, type AuthContext } from "./auth-middleware.tsx";
-import { toPublicGameState } from "./state-sanitizer.tsx";
+import { verifyAuth, type AuthContext } from "./auth-middleware.ts";
+import { toPublicGameState } from "./state-sanitizer.ts";
 
 const app = new Hono();
 
