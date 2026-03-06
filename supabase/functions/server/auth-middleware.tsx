@@ -16,10 +16,11 @@ export async function verifyAuth(authHeader: string | null): Promise<AuthContext
 
   const token = authHeader.substring(7); // Remove 'Bearer ' prefix
 
-  // Create Supabase client with the user's token
+  // Create Supabase client for JWT verification
+  // Use service role key to verify user tokens
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     {
       global: {
         headers: {
@@ -30,7 +31,7 @@ export async function verifyAuth(authHeader: string | null): Promise<AuthContext
   );
 
   // Verify the token and get the user
-  const { data: { user }, error } = await supabase.auth.getUser();
+  const { data: { user }, error } = await supabase.auth.getUser(token);
 
   if (error || !user) {
     console.error('Auth verification failed:', error);
